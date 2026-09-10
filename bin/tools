@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# tools -- cheatsheet for the console toolkit on this machine.
+# Usage: tools [-c|--check] [-q|--quiet] [FILTER]
+set -uo pipefail
+
+# ---- colors (only when writing to a terminal) -------------------------------
+if [ -t 1 ] && [ "${NO_COLOR:-}" = "" ]; then
+  B=$'\e[1m'; DIM=$'\e[2m'; R=$'\e[0m'
+  CY=$'\e[36m'; GR=$'\e[32m'; YE=$'\e[33m'; RD=$'\e[31m'; MG=$'\e[35m'
+else
+  B=""; DIM=""; R=""; CY=""; GR=""; YE=""; RD=""; MG=""
+fi
+
+CHECK=0; FILTER=""
+for a in "$@"; do
+  case "$a" in
+    -c|--check) CHECK=1 ;;
+    -h|--help)
+      printf 'Usage: tools [-c|--check] [FILTER]\n\n'
+      printf '  (no args)     print the full cheatsheet\n'
+      printf '  FILTER        show only lines matching FILTER (e.g. "tools git")\n'
+      printf '  -c, --check   just show installed / missing status\n'
+      exit 0 ;;
+    -*) printf 'tools: unknown option %s (try --help)\n' "$a" >&2; exit 2 ;;
+    *)  FILTER="$a" ;;
+  esac
+done
+
+# ---- version detection ------------------------------------------------------
+ver() {
+  local c="$1" bin="$1"
+  case "$c" in bat) bin=batcat ;; fd) bin=fdfind ;; esac
+  command -v "$bin" >/dev/null 2>&1 || return 1
+  local v=""
+  case "$c" in
+    yazi)    v=$(yazi --version 2>&1 | awk '/Version:/{print $2; exit}') ;;
+    lazygit) v=$(lazygit --version 2>&1 | tr ',' '\n' | awk -F= '/version=/{print $2; exit}') ;;
+    eza)     v=$(eza --version 2>&1 | awk '/^v[0-9]/{print substr($1,2); exit}') ;;
+    ncdu)    v=$(ncdu -v 2>&1 | awk '{print $NF; exit}') ;;
+    mc)      v=$(mc --version 2>&1 | awk '{print $NF; exit}') ;;
+    procs)   v=$(procs --version 2>&1 | tr -d '"' | awk '{print $2; exit}') ;;
+    sqlite3) v=$(sqlite3 --version 2>&1 | awk '{print $1; exit}') ;;
+    psql)    v=$(psql --version 2>&1 | awk '{print $3; exit}') ;;
+    btop)    v=$(btop --version 2>&1 | awk '{print $NF; exit}') ;;
+    docker)  v=$(docker --version 2>&1 | tr -d ',' | awk '{print $3; exit}') ;;
+    mitmproxy) v=$(mitmproxy --version 2>&1 | awk '/Mitmproxy/{print $2; exit}') ;;
+    herdr)   v=$(herdr --version 2>&1 | awk '{print $2; exit}') ;;
+    claude)  v=$(claude --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) ;;
+    *)       v=$("$bin" --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) ;;
+  esac
+  [ -n "$v" ] && printf '%s' "$v" || printf '?'
+}
+
+# ---- the toolkit: SECTION | cmd | what it does | how you actually use it ----
+data() {
+cat <<'ROWS'
+MARKDOWN|glow|render markdown in the terminal|glow FILE.md  ·  glow . browses every md file in the tree  ·  -p pager
+MARKDOWN|bat|cat with syntax highlighting + git gutter|bat FILE  ·  also your man pager  ·  -p plain, -A show invisibles
+NAVIGATE|yazi|TUI file manager with live previews|y to open  ·  yy opens and cd's on exit  ·  q quit, Enter open, / find
+NAVIGATE|mc|Midnight Commander, classic two-pane manager|mc  ·  Tab switches pane, F5 copy, F6 move, F10 quit
+NAVIGATE|eza|modern ls, shows git status per file|ll long+all+git  ·  lt tree 2 deep  ·  eza -l --sort=modified
+NAVIGATE|zoxide|cd by frecency, learns where you go|z myproj jumps there from anywhere  ·  zi pick from a fuzzy list
+NAVIGATE|fzf|fuzzy finder over anything on stdin|ctrl-t insert a file  ·  ctrl-r search history  ·  vim "$(fzf)"
+NAVIGATE|fd|fast, gitignore-aware find|fd PATTERN  ·  fd -e py  ·  fd -H hidden too  ·  fd -x CMD run per hit
+NAVIGATE|rg|fast recursive grep|rg PATTERN  ·  -i case-insens  ·  -t py by type  ·  -l names only  ·  -C 3 context
+NAVIGATE|tree|plain directory tree|tree -L 2  ·  -a hidden  ·  -d dirs only
+GIT|lazygit|full git TUI: stage hunks, commit, branch, rebase|lg to open  ·  space stage, c commit, P push, ? help
+GIT|tig|browse history, blame and diffs|tig  ·  tig blame FILE  ·  tig status  ·  Enter opens a commit
+GIT|delta|pretty diff pager, wired into git already|n/N jump between files  ·  git -c delta.side-by-side=true diff
+DATA|sqlite3|query a SQLite database|sqlite3 app.db ".tables"  ·  -header -column for readable output
+DATA|psql|postgres client|psql -h localhost -U myuser -d mydb  ·  \dt tables, \d+ TBL describe
+DATA|yq|jq for YAML|yq '.server' config.yaml  ·  -i edits in place  ·  -o=json converts to JSON
+DATA|jq|slice and filter JSON|jq . FILE  ·  jq -r '.[].url'  ·  jq -s combine multiple inputs
+DATA|jless|scrollable JSON viewer for big payloads|jless FILE.json  ·  Enter expand, / search, q quit
+DATA|csvlens|CSV/TSV viewer with search and frozen headers|csvlens FILE.csv  ·  / search, arrows scroll, q quit
+HTTP|xh|fast HTTP client, curl replacement|xh HEAD example.com  ·  xh GET url k=v  ·  --follow  ·  xhs for https
+HTTP|mitmproxy|see the requests your code actually makes|mitmproxy -p 8080 then set HTTP_PROXY  ·  mitmweb for a browser UI
+HTTP|lnav|log navigator: merges, parses and colourises logs|lnav LOGFILE  ·  lnav dir/  ·  accepts SQL over log lines
+DOCKER|docker|containers and local service stacks|docker compose up -d  ·  compose ps / logs -f  ·  --profile NAME for optional services
+DOCKER|dive|inspect image layers and wasted space|dive myapp:latest  ·  Tab switches panes
+DEV|watchexec|rerun a command when files change|watch-tests reruns make test-fast on any .py save  ·  -e py -- CMD
+DEV|hyperfine|statistically sound benchmarking|hyperfine 'make build'  ·  -w 3 warmups  ·  compare two commands directly
+DEV|direnv|auto-load .envrc when you enter a directory|echo 'export X=1' > .envrc  ·  direnv allow
+DEV|sd|sane find-and-replace, saner than sed|sd 'old' 'new' FILE  ·  -p preview only
+SYSTEM|btop|process and resource monitor|top (aliased)  ·  m sort by memory, k kill, q quit
+SYSTEM|procs|modern ps with tree view and colour|procs  ·  procs --tree  ·  procs python
+SYSTEM|dust|disk usage, biggest first|dust  ·  du2 (aliased)  ·  -d 2 depth limit
+SYSTEM|ncdu|interactive disk usage browser|ncdu .  ·  d delete, n/s sort by name/size, q quit
+AGENTS|claude|Claude Code - agentic coding in the terminal|claude  ·  claude -c resume the last session  ·  /help inside
+AGENTS|herdr|terminal workspace manager for coding agents|herdr  ·  --session NAME  ·  --remote SSH-TARGET  ·  herdr update
+ROWS
+}
+
+# ---- check mode -------------------------------------------------------------
+if [ "$CHECK" = 1 ]; then
+  printf '%s\n' "${B}tool status${R}"
+  miss=0
+  while IFS='|' read -r sect cmd desc _; do
+    [ -n "${cmd:-}" ] || continue
+    if v=$(ver "$cmd"); then
+      printf '  %s%-10s%s %-8s %s%s%s\n' "$GR" "$cmd" "$R" "$v" "$DIM" "$desc" "$R"
+    else
+      printf '  %s%-10s%s %-8s %sNOT INSTALLED%s\n' "$RD" "$cmd" "$R" "-" "$RD" "$R"
+      miss=$((miss+1))
+    fi
+  done < <(data)
+  [ "$miss" -gt 0 ] && printf '\n%s%d missing%s\n' "$YE" "$miss" "$R" || printf '\n%sall present%s\n' "$GR" "$R"
+  exit 0
+fi
+
+# ---- cheatsheet -------------------------------------------------------------
+printf '\n %sconsole toolkit%s  %son %s · tools -c to check, tools FILTER to narrow%s\n' \
+  "$B" "$R" "$DIM" "$(hostname)" "$R"
+
+last=""
+shown=0
+while IFS='|' read -r sect cmd desc usage; do
+  [ -n "${cmd:-}" ] || continue
+  if [ -n "$FILTER" ]; then
+    printf '%s %s %s %s' "$sect" "$cmd" "$desc" "$usage" \
+      | grep -qi -- "$FILTER" || continue
+  fi
+  if [ "$sect" != "$last" ]; then
+    printf '\n %s%s%s\n' "$MG$B" "$sect" "$R"
+    last="$sect"
+  fi
+  if v=$(ver "$cmd"); then
+    printf '   %s%-10s%s %s%-8s%s %s\n' "$CY$B" "$cmd" "$R" "$DIM" "$v" "$R" "$desc"
+  else
+    printf '   %s%-10s%s %s%-8s%s %s\n' "$RD$B" "$cmd" "$R" "$RD" "missing" "$R" "$desc"
+  fi
+  printf '              %s%s%s\n' "$DIM" "$usage" "$R"
+  shown=$((shown+1))
+done < <(data)
+
+if [ "$shown" = 0 ]; then
+  printf '\n %sno tool matches "%s"%s\n\n' "$YE" "$FILTER" "$R"
+  exit 1
+fi
+
+[ -n "$FILTER" ] && { printf '\n'; exit 0; }
+
+# ---- extras -----------------------------------------------------------------
+printf '\n %sSHELL%s\n' "$MG$B" "$R"
+printf '   %sctrl-t%s  insert a file path       %sctrl-r%s  fuzzy history search\n' "$CY$B" "$R" "$CY$B" "$R"
+printf '   %sz DIR%s   jump by frecency         %szi%s      pick a dir interactively\n' "$CY$B" "$R" "$CY$B" "$R"
+printf '   %syy%s      yazi, then cd to where you ended up\n' "$CY$B" "$R"
+printf '   %s\\cat%s    the real cat (cat is aliased to bat)\n' "$CY$B" "$R"
+printf '   %sman X%s   man pages render through bat\n' "$CY$B" "$R"
+
+printf '\n %sGIT CONFIG%s %s(global)%s\n' "$MG$B" "$R" "$DIM" "$R"
+for k in core.pager merge.conflictStyle diff.colorMoved; do
+  printf '   %-20s %s%s%s\n' "$k" "$DIM" "$(git config --global --get "$k" 2>/dev/null || echo unset)" "$R"
+done
+
+printf '\n %s%s%s\n\n' "$DIM" "defined in ~/.local/bin/tools · aliases in ~/.bashrc" "$R"
