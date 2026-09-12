@@ -398,6 +398,160 @@ Arrows navigate, `d` delete, `n`/`s` sort by name/size, `q` quit.
 
 ---
 
+## Editor
+
+### nvim — Neovim, set up as a Python IDE
+Neovim 0.12 plus a config that turns it into a working Python environment: types and
+completion from **basedpyright**, linting and formatting from **ruff**, a debugger, a file
+tree, fuzzy finding, treesitter syntax and git signs. Nothing here needs a nerd font, and the config is
+about 400 lines of Lua you can read in one sitting — see `nvim/` in the devbox repo.
+
+```bash
+nvim file.py      # vi and vim are aliased to it
+v                 # pick a file with fzf, open it
+v src/app.py      # same as nvim src/app.py
+```
+
+**The leader key is `<space>`.** Press `<space>?` in a buffer to see every mapping,
+grouped, without leaving the editor.
+
+#### The part that matters: Python
+
+Open any file in a project and two language servers attach by themselves:
+
+| Server | Job |
+|---|---|
+| basedpyright | types, completion, hover, go-to-definition, inlay hints |
+| ruff | lint diagnostics, autofixes, import sorting, formatting |
+
+The interpreter is resolved **per project**, in this order: an activated virtualenv
+(`$VIRTUAL_ENV`), then `.venv/`, `venv/` or `env/` next to the project root, then the system
+`python3` (installed with this group, along with `python3-venv`). That is what stops `import requests` from being flagged as missing when the
+package is only installed in the project's venv. The statusline shows which venv was picked,
+so when completion looks wrong, look there first.
+
+Saving formats the buffer: ruff autofixes, sorts imports, then formats. To stop it,
+`:FormatToggle` (this session) or `:FormatToggle!` (this buffer only).
+
+```vim
+<space>cf      format now, without saving
+:FormatToggle  turn format-on-save off
+:LspInfo       which servers are attached, and from which root
+:checkhealth   the usual Neovim diagnosis
+```
+
+#### Moving around
+
+| Key | Does |
+|---|---|
+| `<space>` | find files (telescope) |
+| `<space>fg` | live grep the project (ripgrep) |
+| `<space>fb` / `<space>fr` | buffers / recent files |
+| `<space>fs` / `<space>fS` | symbols in this file / in the project |
+| `<space>/` | fuzzy search inside this buffer |
+| `<C-n>` | toggle the file tree on the left (neo-tree) |
+| `<space>ft` / `<space>fF` | toggle the tree / reveal the current file in it |
+| `<space>fG` | the tree, showing only files git sees as changed |
+| `-` | open the parent directory as an editable buffer (oil) |
+| `<S-h>` / `<S-l>` | previous / next buffer |
+| `<C-h/j/k/l>` | move between windows |
+
+**The tree opens by itself** for `nvim` and `nvim some/dir`, with the cursor in it, so `j`,
+`k` and `<CR>` pick a file straight away; `<C-l>` moves to the editor window. It stays shut
+for `nvim file.py` — you asked for a file, not a browser. `<C-n>` toggles it either way. To
+stop it opening on startup, set `vim.g.devbox_tree_on_start = false` near the top of
+`init.lua`. It follows the file you're editing, marks git status and diagnostics in the
+margin, and hides `.venv`, `__pycache__`, `.git` and the various tool caches.
+
+There are two file browsers here on purpose, and they do different jobs. The tree is for
+orientation — seeing where you are while you work. `oil` is for editing the filesystem: `-`
+opens the directory as text, so renaming a line renames the file, deleting lines deletes
+them, and adding a line creates one. `:w` applies the lot, which makes bulk renames an
+ordinary Vim edit.
+
+#### Code
+
+| Key | Does |
+|---|---|
+| `gd` / `gD` / `gy` | go to definition / declaration / type definition |
+| `gr` | references, in a picker |
+| `K` | hover docs |
+| `<space>ca` | code action — this is how you apply ruff's fixes |
+| `<space>cr` | rename symbol across the project |
+| `<space>ch` | toggle inlay hints |
+| `<space>e` | show the full diagnostic under the cursor |
+| `]d` / `[d` | next / previous diagnostic |
+| `]h` / `[h` | next / previous git hunk |
+| `<space>gp` / `<space>gr` / `<space>gb` | preview / reset hunk, blame line |
+
+Completion is **blink.cmp**: it opens as you type, `<CR>` or `<C-y>` accepts, `<C-n>`/`<C-p>`
+cycle, `<Tab>` jumps between snippet placeholders, `<C-e>` dismisses.
+
+#### Debugging
+
+`debugpy` lives in its own venv at `~/.local/share/devbox/debugpy`, so projects don't need to
+install it — but the code being debugged still runs under the project's interpreter.
+
+| Key | Does |
+|---|---|
+| `<space>db` / `<space>dB` | breakpoint / conditional breakpoint |
+| `<space>dc` | start, or continue |
+| `<space>do` / `<space>di` / `<space>dO` | step over / into / out |
+| `<space>du` | toggle the debug UI (scopes, stacks, watches) |
+| `<space>dk` | evaluate the expression under the cursor |
+| `<space>dm` / `<space>df` | debug the test method / test class under the cursor |
+| `<space>dr` / `<space>dt` | REPL / terminate |
+
+`<space>rr` is the non-debugger version: write the file and run it with the project
+interpreter in a split.
+
+#### Changing the config
+
+`~/.config/nvim` is a **copy** of `nvim/` in the devbox repo — edit the repo and re-run
+`./install.sh -g editor`, or the next run will overwrite your changes. The layout:
+
+```
+init.lua                     leader, lazy.nvim bootstrap, load order
+lua/devbox/options.lua       indentation, search, undo, clipboard
+lua/devbox/keymaps.lua       non-plugin keymaps
+lua/devbox/lsp.lua           basedpyright, ruff, diagnostics, LspAttach maps
+lua/devbox/python.lua        venv detection
+lua/devbox/parsers.lua       treesitter languages
+lua/devbox/plugins/*.lua     one file per area: ui, editor (tree, finder, git,
+                             treesitter), coding (completion, formatting), dap
+lazy-lock.json               exact plugin commits
+```
+
+Plugins are managed by **lazy.nvim**: `:Lazy` for the UI, `:Lazy update` to move forward
+(which rewrites `lazy-lock.json` — copy it back into the repo to pin the new state),
+`:Lazy restore` to go back to the locked commits.
+
+### basedpyright — Python types and completion
+A fork of pyright with the licensing and inlay-hint gaps filled in. It runs as the language
+server inside Neovim, but it is also a CLI:
+
+```bash
+basedpyright              # type-check the project
+basedpyright --outputjson # machine-readable, for CI
+```
+Type checking is set to `standard` (pyright's default) rather than basedpyright's stricter
+`recommended`, which would bury an ordinary codebase in hints. Change it in
+`lua/devbox/lsp.lua`, or per project in `pyproject.toml` under `[tool.basedpyright]`.
+
+### ruff — Python linting and formatting
+One fast binary doing the work of flake8, isort and black.
+
+```bash
+ruff check .              # lint
+ruff check --fix .        # lint and fix what it can
+ruff format .             # format
+ruff rule F401            # explain a rule
+```
+Neovim runs `ruff server` for live diagnostics and code actions, and the CLI on save. Project
+settings in `pyproject.toml` (`[tool.ruff]`) or `ruff.toml` are picked up by both.
+
+---
+
 ## AI coding agents
 
 ### claude — Claude Code
@@ -455,6 +609,8 @@ disconnect.
 | `du2` | dust |
 | `http` | xh |
 | `watch-tests` | rerun `make test-fast` on any `.py` change (assumes such a target) |
+| `vi` / `vim` | neovim |
+| `v` | neovim on the file fzf picks (or on the arguments given) |
 | `\cat` | the *real* `cat` — plain `cat` is aliased to bat |
 
 ---
@@ -469,6 +625,15 @@ Delete the marker and the line after it to undo the shell changes.
 
 **`~/.local/bin`** — the `tools` script, plus `bat` → `batcat` and `fd` → `fdfind`
 symlinks (Ubuntu ships those two under different names).
+
+**`~/.config/nvim`** — a copy of `nvim/` from the devbox repo, marked with a
+`.devbox-managed` file. A config that isn't marked is left alone: the installer warns and
+moves on rather than overwriting it. Plugins land in `~/.local/share/nvim/lazy`.
+
+**`/opt/nvim-<version>`** — Neovim's tarball, unpacked whole (it needs its runtime files,
+not just the binary), with a symlink at `/usr/local/bin/nvim`.
+
+**`~/.local/share/devbox/debugpy`** — a venv holding debugpy for the Neovim debugger.
 
 **Global git config:**
 
@@ -486,16 +651,19 @@ symlinks (Ubuntu ships those two under different names).
 ## Where each tool came from
 
 - **apt (Ubuntu repos):** bat, fzf, tig, tree, fd-find, ncdu, mc, git-delta, eza, ripgrep,
-  sqlite3, postgresql-client, lnav, hyperfine, zoxide, btop, sd, direnv
+  sqlite3, postgresql-client, lnav, hyperfine, zoxide, btop, sd, direnv, build-essential,
+  python3, python3-venv
 - **apt (Docker's official repo):** docker-ce, docker-ce-cli, containerd.io,
   docker-buildx-plugin, docker-compose-plugin
 - **GitHub releases, into `/usr/local/bin`:** glow, lazygit, yazi, yq, jless, csvlens, xh,
-  dust, procs, watchexec, dive
+  dust, procs, watchexec, dive, tree-sitter
+- **GitHub releases, into `/opt`:** neovim (a tarball with runtime files, symlinked onto PATH)
 - **Vendor install scripts:** Claude Code (`claude.ai/install.sh`), herdr
   (`herdr.dev/install.sh` — resolves the build from `latest.json` and verifies its
   SHA-256), uv (`astral.sh/uv/install.sh`). All three install to `~/.local/bin`, no sudo.
 - **uv tool:** mitmproxy (apt's version is four majors behind; upgrade with
-  `uv tool upgrade mitmproxy`)
+  `uv tool upgrade mitmproxy`), basedpyright and ruff — Python packages, so they get
+  their own venvs rather than polluting a project's
 
 Updating: apt tools come with `sudo apt update && sudo apt upgrade`. The `/usr/local/bin`
 binaries were installed by hand and do **not** auto-update — re-download from the project's

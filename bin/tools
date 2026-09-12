@@ -45,6 +45,8 @@ ver() {
     docker)  v=$(docker --version 2>&1 | tr -d ',' | awk '{print $3; exit}') ;;
     mitmproxy) v=$(mitmproxy --version 2>&1 | awk '/Mitmproxy/{print $2; exit}') ;;
     herdr)   v=$(herdr --version 2>&1 | awk '{print $2; exit}') ;;
+    nvim)    v=$(nvim --version 2>&1 | awk 'NR==1{print substr($2,2); exit}') ;;
+    basedpyright) v=$(basedpyright --version 2>&1 | awk '{print $2; exit}') ;;
     claude)  v=$(claude --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) ;;
     *)       v=$("$bin" --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) ;;
   esac
@@ -82,6 +84,9 @@ DEV|watchexec|rerun a command when files change|watch-tests reruns make test-fas
 DEV|hyperfine|statistically sound benchmarking|hyperfine 'make build'  ·  -w 3 warmups  ·  compare two commands directly
 DEV|direnv|auto-load .envrc when you enter a directory|echo 'export X=1' > .envrc  ·  direnv allow
 DEV|sd|sane find-and-replace, saner than sed|sd 'old' 'new' FILE  ·  -p preview only
+EDITOR|nvim|neovim, set up as a python IDE|nvim FILE  ·  vi/vim aliased to it  ·  ctrl-n file tree  ·  <space>? keymaps
+EDITOR|basedpyright|python types, completion and go-to-definition|starts by itself inside nvim  ·  uses the project's .venv
+EDITOR|ruff|python linter and formatter|ruff check .  ·  ruff format .  ·  nvim runs both on save
 SYSTEM|btop|process and resource monitor|top (aliased)  ·  m sort by memory, k kill, q quit
 SYSTEM|procs|modern ps with tree view and colour|procs  ·  procs --tree  ·  procs python
 SYSTEM|dust|disk usage, biggest first|dust  ·  du2 (aliased)  ·  -d 2 depth limit
@@ -98,9 +103,9 @@ if [ "$CHECK" = 1 ]; then
   while IFS='|' read -r sect cmd desc _; do
     [ -n "${cmd:-}" ] || continue
     if v=$(ver "$cmd"); then
-      printf '  %s%-10s%s %-8s %s%s%s\n' "$GR" "$cmd" "$R" "$v" "$DIM" "$desc" "$R"
+      printf '  %s%-12s%s %-8s %s%s%s\n' "$GR" "$cmd" "$R" "$v" "$DIM" "$desc" "$R"
     else
-      printf '  %s%-10s%s %-8s %sNOT INSTALLED%s\n' "$RD" "$cmd" "$R" "-" "$RD" "$R"
+      printf '  %s%-12s%s %-8s %sNOT INSTALLED%s\n' "$RD" "$cmd" "$R" "-" "$RD" "$R"
       miss=$((miss+1))
     fi
   done < <(data)
@@ -125,11 +130,11 @@ while IFS='|' read -r sect cmd desc usage; do
     last="$sect"
   fi
   if v=$(ver "$cmd"); then
-    printf '   %s%-10s%s %s%-8s%s %s\n' "$CY$B" "$cmd" "$R" "$DIM" "$v" "$R" "$desc"
+    printf '   %s%-12s%s %s%-8s%s %s\n' "$CY$B" "$cmd" "$R" "$DIM" "$v" "$R" "$desc"
   else
-    printf '   %s%-10s%s %s%-8s%s %s\n' "$RD$B" "$cmd" "$R" "$RD" "missing" "$R" "$desc"
+    printf '   %s%-12s%s %s%-8s%s %s\n' "$RD$B" "$cmd" "$R" "$RD" "missing" "$R" "$desc"
   fi
-  printf '              %s%s%s\n' "$DIM" "$usage" "$R"
+  printf '                %s%s%s\n' "$DIM" "$usage" "$R"
   shown=$((shown+1))
 done < <(data)
 
@@ -147,6 +152,16 @@ printf '   %sz DIR%s   jump by frecency         %szi%s      pick a dir interacti
 printf '   %syy%s      yazi, then cd to where you ended up\n' "$CY$B" "$R"
 printf '   %s\\cat%s    the real cat (cat is aliased to bat)\n' "$CY$B" "$R"
 printf '   %sman X%s   man pages render through bat\n' "$CY$B" "$R"
+
+if command -v nvim >/dev/null 2>&1 && [ -f "$HOME/.config/nvim/.devbox-managed" ]; then
+printf '\n %sNEOVIM%s %s(leader is space)%s\n' "$MG$B" "$R" "$DIM" "$R"
+printf '   %s<space><space>%s  find files    %s<space>fg%s  grep the project\n' "$CY$B" "$R" "$CY$B" "$R"
+printf '   %sgd K gr%s   definition, docs, uses %s<space>ca%s  code action (ruff fixes)\n' "$CY$B" "$R" "$CY$B" "$R"
+printf '   %s<space>cf%s formats now; saving formats anyway (:FormatToggle to stop)\n' "$CY$B" "$R"
+printf '   %s<space>db%s breakpoint  %s<space>dc%s start/continue  %s<space>du%s debug UI\n' "$CY$B" "$R" "$CY$B" "$R" "$CY$B" "$R"
+printf '   %sctrl-n%s    file tree on the left  %s-%s         this directory as a buffer\n' "$CY$B" "$R" "$CY$B" "$R"
+printf '   %s<space>?%s   every keymap, grouped\n' "$CY$B" "$R"
+fi
 
 printf '\n %sGIT CONFIG%s %s(global)%s\n' "$MG$B" "$R" "$DIM" "$R"
 for k in core.pager merge.conflictStyle diff.colorMoved; do

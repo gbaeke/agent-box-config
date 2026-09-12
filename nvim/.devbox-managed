@@ -1,0 +1,2 @@
+devbox-managed nvim config — installed by devbox install.sh -g editor.
+Edits here are overwritten on the next run; change the repo copy instead.

@@ -1,8 +1,8 @@
 # devbox
 
 One script that turns a fresh Ubuntu box into a comfortable terminal working
-environment: 30-odd modern CLI tools, Docker, the GitHub CLI, and the agent
-tooling (Claude Code and herdr).
+environment: 30-odd modern CLI tools, Docker, the GitHub CLI, Neovim set up for
+Python, and the agent tooling (Claude Code and herdr).
 
 ```bash
 git clone <this-repo> devbox && cd devbox
@@ -24,6 +24,7 @@ installed.
 | `http` | xh, mitmproxy, lnav |
 | `docker` | Docker Engine + Compose plugin, dive |
 | `dev` | watchexec, hyperfine, direnv, sd, uv, make |
+| `editor` | **Neovim** + a Python IDE config (python3, basedpyright, ruff, debugpy, treesitter) |
 | `system` | btop, procs, dust, ncdu |
 | `agents` | **Claude Code**, **herdr** (alias: `claude`) |
 
@@ -74,6 +75,10 @@ Everything it touches, so you can undo it:
 | `~/.config/devbox/toolkit.sh` | aliases, fzf keybindings, zoxide/direnv init, the `yy` function |
 | `~/.bashrc` | **one** line sourcing the file above |
 | `~/.local/share/devbox/TOOLS.md` | a copy of the reference doc |
+| `~/.config/nvim` | a copy of `nvim/` — only if absent or devbox-managed (see below) |
+| `/opt/nvim-<version>` | Neovim, unpacked whole, symlinked to `/usr/local/bin/nvim` |
+| `~/.local/share/devbox/debugpy` | a venv holding debugpy, for the Neovim debugger |
+| `~/.local/share/nvim` | plugins, parsers and undo history (Neovim's own data dir) |
 | `/etc/apt/sources.list.d/` | the Docker and GitHub CLI apt repos, with keyrings in `/etc/apt/keyrings/` |
 | global git config | `core.pager=delta`, `interactive.diffFilter`, `delta.navigate`, `delta.line-numbers`, `merge.conflictStyle=zdiff3`, `diff.colorMoved=default` |
 | groups | adds you to `docker` |
@@ -90,6 +95,9 @@ sed -i '/# devbox toolkit/,+1d' ~/.bashrc     # stop sourcing the shell config
 rm -rf ~/.config/devbox ~/.local/bin/tools
 sudo rm -f /usr/local/bin/{glow,lazygit,yazi,ya,yq,jless,csvlens,xh,xhs,dust,procs,watchexec,dive}
 rm -f ~/.local/bin/{claude,herdr}   # and ~/.config/herdr, ~/.claude if you want them gone
+rm -rf ~/.config/nvim ~/.local/share/nvim ~/.local/state/nvim   # the editor and its plugins
+sudo rm -rf /opt/nvim-* /usr/local/bin/{nvim,tree-sitter}
+uv tool uninstall basedpyright ruff
 ```
 apt packages come off with `sudo apt remove`, and git settings with
 `git config --global --unset <key>`.
@@ -104,7 +112,9 @@ apt packages come off with `sudo apt remove`, and git settings with
 4. **`herdr`** — launches or attaches to the persistent agent workspace; it
    self-updates later with `herdr update`.
 5. **`gh auth login`** — authenticate the GitHub CLI.
-6. **`tools`** — the cheatsheet.
+6. **`nvim`** — `<space>?` inside lists every keymap. Plugins and parsers were
+   installed during setup, so the first start is a normal one.
+7. **`tools`** — the cheatsheet.
 
 ## Design notes
 
@@ -127,6 +137,25 @@ installs them when missing.
 **`xh` is the musl build.** Upstream publishes no glibc x86_64 binary. It's
 statically linked and works fine.
 
+**The Neovim config is small on purpose.** Thirteen plugins (17 with their
+dependencies), about 800 lines of Lua in `nvim/`, no distribution. Language servers are configured with Neovim 0.12's built-in
+`vim.lsp.config` rather than nvim-lspconfig, and the Python servers are installed by `uv`
+rather than Mason — so there is one tool managing Python packages on the box, not two.
+Plugin commits are pinned in `nvim/lazy-lock.json`; the installer runs `Lazy! restore`, so a
+rebuilt machine gets the same tree. It needs Neovim 0.11+ (`vim.lsp.config`, the treesitter
+`main` branch), which is why the installer puts 0.12 in `/opt` rather than trusting apt's.
+
+**Python is resolved per project.** basedpyright is pointed at `$VIRTUAL_ENV`, else
+`.venv/`, `venv/` or `env/` beside the project root, else the system `python3` — which the
+group installs, because `uv` alone leaves a box where typing `python3` gets you nothing
+(uv's interpreters live inside venvs, and `uv venv` downloads one on demand). Without
+that it resolves imports against the system interpreter and reports half of a project's
+third-party imports as missing. The statusline shows which venv it picked.
+
+**`~/.config/nvim` is never overwritten blindly.** The installed copy carries a
+`.devbox-managed` marker; an unmarked config means someone else's, and the installer warns
+and leaves it alone instead of "backing it up".
+
 **`jless` needs X11 clipboard libraries** (`libxcb-render0`, `libxcb-shape0`,
 `libxcb-xfixes0`) even headless, or it fails at startup with a missing-shared-object
 error. The script installs them.
@@ -138,6 +167,7 @@ install.sh        the installer
 bin/tools         the cheatsheet command, installed to ~/.local/bin
 shell/toolkit.sh  aliases and shell integration, installed to ~/.config/devbox
 docs/TOOLS.md     full reference for every tool
+nvim/             the neovim config, copied to ~/.config/nvim
 ```
 
 ### Adding a tool

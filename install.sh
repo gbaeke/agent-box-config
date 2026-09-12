@@ -9,14 +9,17 @@ REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_BIN="$HOME/.local/bin"
 OPT_BIN="/usr/local/bin"
 CONFIG_DIR="$HOME/.config/devbox"
+NVIM_CONFIG_DIR="$HOME/.config/nvim"
+SHARE_DIR="$HOME/.local/share/devbox"
 MARKER="# devbox toolkit"
+NVIM_VERSION="v0.12.5"
 
 DRY_RUN=0
 ASSUME_YES=0
 REQUESTED=""
 SKIP=""
 
-ALL_GROUPS="core git data http docker dev system agents"
+ALL_GROUPS="core git data http docker dev editor system agents"
 
 # ---------------------------------------------------------------- output -----
 if [ -t 1 ]; then
@@ -55,6 +58,7 @@ Groups:
   http      xh mitmproxy lnav
   docker    docker engine + compose plugin, dive
   dev       watchexec hyperfine direnv sd uv
+  editor    neovim + a python IDE config (python3, basedpyright, ruff, debugpy)
   system    btop procs dust ncdu
   agents    Claude Code, herdr        (alias: 'claude')
 
@@ -116,7 +120,10 @@ The apt packages would work, but the pinned GitHub release binaries are amd64-on
   if [ "$DRY_RUN" = 0 ] && [ "$ASSUME_YES" = 0 ] && [ -t 0 ]; then
     printf 'Proceed? [y/N] '; read -r a; case "$a" in y|Y|yes) ;; *) die "aborted" ;; esac
   fi
-  if [ "$DRY_RUN" = 0 ]; then sudo -v || die "sudo authentication failed"; fi
+  # `sudo -v` prompts even where sudo is passwordless, so try a no-prompt call first.
+  if [ "$DRY_RUN" = 0 ]; then
+    sudo -n true 2>/dev/null || sudo -v || die "sudo authentication failed"
+  fi
 }
 
 APT_UPDATED=0
@@ -160,6 +167,10 @@ gh_bin() {
       *.tar.gz|*.tgz) tar xzf "$file" -C "$tmp" || rc=1 ;;
       *.tar.xz)       tar xf  "$file" -C "$tmp" || rc=1 ;;
       *.zip)          unzip -oq "$file" -d "$tmp" || rc=1 ;;
+      *.gz)           gunzip -c "$file" > "$tmp/$cmd" \
+                        && sudo install -m755 "$tmp/$cmd" "$OPT_BIN/$cmd" || rc=1
+                      [ "$rc" = 0 ] && ok "$cmd"
+                      rm -rf "$tmp"; return "$rc" ;;
       *)              chmod +x "$file" && sudo install -m755 "$file" "$OPT_BIN/$cmd" || rc=1
                       [ "$rc" = 0 ] && ok "$cmd"
                       rm -rf "$tmp"; return "$rc" ;;
@@ -301,6 +312,162 @@ install_dev() {
   install_uv
 }
 
+# ---------------------------------------------------------------- editor -----
+# Neovim ships as a tarball with its own runtime files, so gh_bin (which lifts a
+# single binary out of an archive) can't install it: it goes to /opt instead,
+# with one symlink on PATH.
+install_neovim() {
+  local dest="/opt/nvim-$NVIM_VERSION"
+  local url="https://github.com/neovim/neovim/releases/download/$NVIM_VERSION/nvim-linux-x86_64.tar.gz"
+
+  if have nvim; then
+    local current major minor
+    current="$(nvim --version 2>/dev/null | awk 'NR==1{print $2}')"   # e.g. v0.12.5
+    major="$(printf '%s' "${current#v}" | cut -d. -f1)"
+    minor="$(printf '%s' "${current#v}" | cut -d. -f2)"
+    if [ "${major:-0}" -gt 0 ] || [ "${minor:-0}" -ge 11 ]; then
+      skip "neovim already installed ($current)"
+      return 0
+    fi
+    warn "found neovim $current; this config needs 0.11+ (vim.lsp.config, treesitter main branch)"
+    warn "installing $NVIM_VERSION to $dest — /usr/local/bin comes before /usr/bin, so it wins"
+  fi
+
+  say "Installing neovim $NVIM_VERSION"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  %s[dry-run]%s download %s -> %s\n' "$DIM" "$R" "$url" "$dest"
+    return 0
+  fi
+
+  local tmp rc=0
+  tmp="$(mktemp -d)" || { warn "mktemp failed"; return 1; }
+  if curl -fsSL --retry 3 -o "$tmp/nvim.tar.gz" "$url"; then
+    sudo rm -rf "$dest"
+    sudo mkdir -p "$dest"
+    if sudo tar xzf "$tmp/nvim.tar.gz" -C "$dest" --strip-components=1; then
+      sudo ln -sf "$dest/bin/nvim" "$OPT_BIN/nvim"
+      ok "neovim $NVIM_VERSION ($dest, symlinked to $OPT_BIN/nvim)"
+    else
+      warn "could not unpack the neovim tarball"; rc=1
+    fi
+  else
+    warn "download failed: $url"; rc=1
+  fi
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+# basedpyright and ruff are Python packages, so uv installs them into their own
+# tool venvs; debugpy has no entry point, so it gets a plain venv of its own.
+install_python_tooling() {
+  # A system python. `uv venv` downloads a managed interpreter when a project
+  # needs one, so this is not strictly required — but a machine where typing
+  # `python3` gets you nothing is a bad machine to hand someone, and Neovim's
+  # python3 provider wants a real interpreter too. python3-venv is here so
+  # `python3 -m venv` works, which Ubuntu otherwise splits into its own package.
+  apt_install python3 python3-venv
+
+  install_uv || return 1
+  export PATH="$LOCAL_BIN:$PATH"
+
+  local tool
+  for tool in basedpyright ruff; do
+    if have "$tool" || { [ "$tool" = basedpyright ] && have basedpyright-langserver; }; then
+      skip "$tool already installed"
+    else
+      say "Installing $tool (uv tool)"
+      run uv tool install --quiet "$tool" && ok "$tool"
+    fi
+  done
+
+  local venv="$SHARE_DIR/debugpy"
+  if [ -x "$venv/bin/python" ] && "$venv/bin/python" -c 'import debugpy' 2>/dev/null; then
+    skip "debugpy already installed ($venv)"
+  else
+    say "Installing debugpy (its own venv, so projects don't need it)"
+    run mkdir -p "$SHARE_DIR"
+    if [ "$DRY_RUN" = 0 ]; then
+      if uv venv --quiet "$venv" && uv pip install --quiet --python "$venv/bin/python" debugpy; then
+        ok "debugpy ($venv)"
+      else
+        warn "debugpy install failed — the nvim debugger falls back to the project interpreter"
+      fi
+    else
+      printf '  %s[dry-run]%s uv venv %s && uv pip install debugpy\n' "$DIM" "$R" "$venv"
+    fi
+  fi
+  return 0
+}
+
+install_nvim_config() {
+  # Never clobber a config we didn't write. The marker file says it's ours.
+  if [ -e "$NVIM_CONFIG_DIR" ] && [ ! -e "$NVIM_CONFIG_DIR/.devbox-managed" ]; then
+    warn "$NVIM_CONFIG_DIR exists and wasn't installed by devbox — leaving it alone"
+    warn "move it aside and re-run if you want the devbox config: mv $NVIM_CONFIG_DIR $NVIM_CONFIG_DIR.bak"
+    return 0
+  fi
+
+  say "Installing the neovim config"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  %s[dry-run]%s copy %s/nvim -> %s, then bootstrap plugins headlessly\n' \
+      "$DIM" "$R" "$REPO_DIR" "$NVIM_CONFIG_DIR"
+    return 0
+  fi
+
+  # Config files only: plugins live in ~/.local/share/nvim and stay put.
+  mkdir -p "$NVIM_CONFIG_DIR"
+  cp -r "$REPO_DIR/nvim/." "$NVIM_CONFIG_DIR/"
+  ok "$NVIM_CONFIG_DIR"
+
+  have nvim || { warn "nvim is not on PATH; skipping the plugin bootstrap"; return 1; }
+
+  # Do the first-run work now, so opening nvim later is instant and any failure
+  # shows up here rather than as a wall of red on the user's first edit.
+  # The chatter goes to a log; only errors are worth the terminal.
+  mkdir -p "$SHARE_DIR"
+  local log="$SHARE_DIR/nvim-bootstrap.log"
+  : > "$log"
+
+  say "Syncing plugins (a minute or two the first time) — log: $log"
+  if [ -f "$NVIM_CONFIG_DIR/lazy-lock.json" ]; then
+    nvim --headless "+Lazy! restore" +qa >>"$log" 2>&1 || true
+  else
+    nvim --headless "+Lazy! sync" +qa >>"$log" 2>&1 || true
+  fi
+  ok "plugins installed ($(find "$HOME/.local/share/nvim/lazy" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l))"
+
+  # A download interrupted half way leaves a temp dir behind, and the next
+  # attempt fails to rename over it. Clear them before compiling.
+  rm -rf "$HOME/.cache/nvim/"tree-sitter-*-tmp 2>/dev/null || true
+
+  say "Compiling treesitter parsers"
+  nvim --headless \
+    -c 'lua require("nvim-treesitter").install(require("devbox.parsers")):wait(600000)' \
+    -c 'qa' >>"$log" 2>&1 || true
+  local missing
+  missing="$(nvim --headless \
+    -c 'lua local ts = require("nvim-treesitter") local got = ts.get_installed("parsers") local out = {} for _, p in ipairs(require("devbox.parsers")) do if not vim.tbl_contains(got, p) then table.insert(out, p) end end io.stdout:write(table.concat(out, " "))' \
+    -c 'qa' 2>/dev/null)"
+  if [ -n "$missing" ]; then
+    warn "treesitter parsers not built: $missing (see $log; :TSInstall inside nvim retries)"
+  else
+    ok "treesitter parsers"
+  fi
+  return 0
+}
+
+install_editor() {
+  # A C toolchain: treesitter compiles parsers, telescope-fzf-native compiles a sorter.
+  apt_install build-essential git curl unzip
+  install_neovim || return 1
+  # nvim-treesitter's main branch drives the tree-sitter CLI to build parsers.
+  gh_bin tree-sitter tree-sitter/tree-sitter v0.27.0 \
+    "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.0/tree-sitter-linux-x64.gz"
+  install_python_tooling
+  install_nvim_config
+  return 0
+}
+
 # ---------------------------------------------------------------- system -----
 install_system() {
   apt_install btop ncdu
@@ -384,6 +551,7 @@ main() {
   if want http;   then say "GROUP: http";   install_http;   fi
   if want docker; then say "GROUP: docker"; install_docker; fi
   if want dev;    then say "GROUP: dev";    install_dev;    fi
+  if want editor; then say "GROUP: editor"; install_editor; fi
   if want system; then say "GROUP: system"; install_system; fi
   if want agents; then say "GROUP: agents"; install_agents; fi
   install_shell

@@ -7,6 +7,10 @@ case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$P
 
 # ---- environment ------------------------------------------------------------
 export BAT_THEME="${BAT_THEME:-ansi}"
+if command -v nvim >/dev/null 2>&1; then
+  export EDITOR="${EDITOR:-nvim}"
+  export VISUAL="${VISUAL:-nvim}"
+fi
 if command -v batcat >/dev/null 2>&1; then
   export MANPAGER="sh -c 'col -bx | batcat -l man -p'"
 fi
@@ -23,6 +27,13 @@ command -v procs   >/dev/null 2>&1 && alias ps-tui='procs'
 command -v dust    >/dev/null 2>&1 && alias du2='dust'
 command -v xh      >/dev/null 2>&1 && alias http='xh'
 command -v ncdu    >/dev/null 2>&1 && alias du-tui='ncdu'
+
+if command -v nvim >/dev/null 2>&1; then
+  alias vi='nvim'
+  alias vim='nvim'
+  # open the file fzf picks, or the files rg matched
+  v() { if [ $# -gt 0 ]; then nvim "$@"; else local f; f="$(fzf)" && [ -n "$f" ] && nvim "$f"; fi; }
+fi
 
 if command -v eza >/dev/null 2>&1; then
   alias ls='eza --group-directories-first'
